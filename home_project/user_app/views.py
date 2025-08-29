@@ -624,53 +624,28 @@ def search_page(request):
             request.session.modified = True
 
     # ------------------ IMAGE SEARCH ------------------
-    # ------------------ IMAGE SEARCH ------------------
     elif request.method == "POST" and form.is_valid():
         uploaded_image = request.FILES.get("image")
         if uploaded_image:
             try:
                 hf_url = "https://ayshath-hf-image-search.hf.space/run/predict"
-    
                 files = {"data": uploaded_image.read()}
                 response = requests.post(hf_url, files=files)
-    
+
                 if response.status_code == 200:
                     hf_results = response.json()
-    
-                    # Handle both possible formats
-                    if isinstance(hf_results, list) and all(isinstance(p, str) for p in hf_results):
-                        product_ids = hf_results
-                    elif isinstance(hf_results, list) and all(isinstance(p, dict) for p in hf_results):
-                        product_ids = [p.get("p_id") for p in hf_results if "p_id" in p]
-                    else:
-                        product_ids = []
-    
-                    products = Products.objects.filter(p_id__in=product_ids).only(
-                        "p_id", "p_name", "price"
-                    ).prefetch_related("product_image_set")
-    
-                    # Attach image (from HF if provided, else fallback)
-                    for p in products:
-                        hf_image = None
-                        if isinstance(hf_results[0], dict):  # only if dict response
-                            hf_image = next(
-                                (item.get("image") for item in hf_results if item.get("p_id") == p.p_id),
-                                None
-                            )
-                        if hf_image:
-                            p.display_image = hf_image
-                        else:
-                            first_image = p.product_image_set.first()
-                            p.display_image = first_image.image.url if first_image else None
+
+                    # ✅ Expecting just a list of product IDs
+                    if isinstance(hf_results, list):
+                        product_ids = [str(p) for p in hf_results]
+                        products = Products.objects.filter(p_id__in=product_ids).prefetch_related("product_image_set")
+                        searched = True
                 else:
-                    print("Hugging Face API error:", response.status_code, response.text)
-    
-                print("HF raw response:", response.text)
-                print("Extracted product_ids:", product_ids)
-                print("Products found:", products.count())
-    
+                    print("HF API error:", response.status_code, response.text)
+
             except Exception as e:
                 print("Error during HF image search:", str(e))
+
     
 
 

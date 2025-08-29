@@ -94,13 +94,8 @@ WSGI_APPLICATION = 'home_project.wsgi.application'
 
 
 DATABASES = {
-    'default': dj_database_url.config(default=f"sqlite:///{os.path.join(BASE_DIR, 'db.sqlite3')}")
-}
-
-DATABASES = {
     'default': dj_database_url.config(default='sqlite:///db.sqlite3')
 }
-
 
 
 

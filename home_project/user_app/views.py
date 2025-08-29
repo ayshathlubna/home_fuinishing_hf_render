@@ -624,42 +624,44 @@ def search_page(request):
 
     # ------------------ IMAGE SEARCH ------------------
     elif request.method == "POST" and form.is_valid():
-        uploaded_image = request.FILES.get("image")
-        if uploaded_image:
-            try:
-                hf_url = "https://ayshath-hf-image-search.hf.space/run/predict"
+    uploaded_image = request.FILES.get("image")
+    if uploaded_image:
+        try:
+            hf_url = "https://ayshath-hf-image-search.hf.space/run/predict"
 
-                files = {"data": uploaded_image.read()}
-                response = requests.post(hf_url, files=files)
+            files = {"data": uploaded_image.read()}
+            response = requests.post(hf_url, files=files)
 
-                if response.status_code == 200:
-                    hf_results = response.json()
-                    product_ids = [p.get("p_id") for p in hf_results if "p_id" in p]
+            if response.status_code == 200:
+                hf_results = response.json()
+                product_ids = [p.get("p_id") for p in hf_results if "p_id" in p]
 
-                    products = Products.objects.filter(p_id__in=product_ids).only(
-                        "p_id", "p_name", "price"
-                    ).prefetch_related("product_image_set")
+                products = Products.objects.filter(p_id__in=product_ids).only(
+                    "p_id", "p_name", "price"
+                ).prefetch_related("product_image_set")
 
-                    for p in products:
-                        # Prefer Hugging Face image if provided
-                        hf_image = next(
-                            (item.get("image") for item in hf_results if item.get("p_id") == p.p_id),
-                            None
-                        )
-                        if hf_image:
-                            p.display_image = hf_image
-                        else:
-                            first_image = p.product_image_set.first()
-                            p.display_image = first_image.image.url if first_image else None
-                else:
-                    print("Hugging Face API error:", response.status_code, response.text)
+                for p in products:
+                    hf_image = next(
+                        (item.get("image") for item in hf_results if item.get("p_id") == p.p_id),
+                        None
+                    )
+                    if hf_image:
+                        p.display_image = hf_image
+                    else:
+                        first_image = p.product_image_set.first()
+                        p.display_image = first_image.image.url if first_image else None
+            else:
+                print("Hugging Face API error:", response.status_code, response.text)
+
+            # ✅ These debug prints must also be inside try
             print("HF raw response:", response.text)
-print("HF parsed results:", hf_results)
-print("Extracted product_ids:", product_ids)
-print("Products found:", products.count())
+            print("HF parsed results:", hf_results)
+            print("Extracted product_ids:", product_ids)
+            print("Products found:", products.count())
 
-            except Exception as e:
-                print("Error during HF image search:", str(e))
+        except Exception as e:
+            print("Error during HF image search:", str(e))
+
 
     recent_searches = request.session.get("recent_searches", [])[:10]
 

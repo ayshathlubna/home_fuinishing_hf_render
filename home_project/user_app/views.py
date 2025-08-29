@@ -584,15 +584,9 @@ from .models import Products
 from .forms import ImageSearchForm
 
 def search_page(request):
-    """
-    Handles both text search and image search.
-    Text search: searches Products based on query in name, description, category, sub_category, or brand.
-    Image search: sends uploaded image to Hugging Face Space and retrieves similar product IDs.
-    """
-
     query = request.GET.get("q", "")
     form = ImageSearchForm(request.POST or None, request.FILES or None)
-    products = Products.objects.none()  # default empty queryset
+    products = Products.objects.none()  
 
     # Initialize recent searches
     if "recent_searches" not in request.session:
@@ -611,7 +605,7 @@ def search_page(request):
             Q(category__category_name__icontains=query) |
             Q(sub_category__sub_cat_name__icontains=query) |
             Q(brand__icontains=query)
-        ).only("p_id", "p_name", "price")  # fetch only needed fields
+        ).only("p_id", "p_name", "price").prefetch_related("product_image_set")
 
         # Save text search in recent searches (store p_id + first image URL)
         first_image_url = None
@@ -625,7 +619,7 @@ def search_page(request):
         recent_searches = request.session["recent_searches"]
         if new_entry not in recent_searches:
             recent_searches.insert(0, new_entry)
-            request.session["recent_searches"] = recent_searches[:10]  # keep last 10
+            request.session["recent_searches"] = recent_searches[:10]
             request.session.modified = True
 
     # ------------------ IMAGE SEARCH ------------------
@@ -633,38 +627,40 @@ def search_page(request):
         uploaded_image = request.FILES.get("image")
         if uploaded_image:
             try:
-                # Hugging Face Space API URL
                 hf_url = "https://huggingface.co/spaces/ayshath/hf_image_search/run/predict"
                 files = {"data": uploaded_image.read()}
                 response = requests.post(hf_url, files=files)
 
                 if response.status_code == 200:
-                    hf_results = response.json()  # list of dicts with p_id
+                    hf_results = response.json()
                     product_ids = [p.get("p_id") for p in hf_results if "p_id" in p]
-                    print(product_ids)
 
-                    # Fetch products, only essential fields
                     products = Products.objects.filter(p_id__in=product_ids).only(
                         "p_id", "p_name", "price"
-                    )
+                    ).prefetch_related("product_image_set")
 
-                    # Map image URLs from HF if provided
                     for p in products:
-                        # HF can optionally return image URL
-                        hf_image = next((item.get("image") for item in hf_results if item.get("p_id") == p.p_id), None)
-                        p.hf_image_url = hf_image  # attach dynamic attribute for template
+                        # Prefer Hugging Face image if provided
+                        hf_image = next(
+                            (item.get("image") for item in hf_results if item.get("p_id") == p.p_id),
+                            None
+                        )
+                        if hf_image:
+                            p.display_image = hf_image
+                        else:
+                            first_image = p.product_image_set.first()
+                            p.display_image = first_image.image.url if first_image else None
                 else:
                     print("Hugging Face API error:", response.status_code, response.text)
 
             except Exception as e:
                 print("Error during HF image search:", str(e))
 
-    # Get the last 10 recent searches
     recent_searches = request.session.get("recent_searches", [])[:10]
 
     return render(request, "user/search_page.html", {
         "query": query,
         "products": products,
         "recent_searches": recent_searches,
-        "form": form
+        "form": form,
     })

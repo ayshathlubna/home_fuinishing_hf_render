@@ -652,6 +652,10 @@ def search_page(request):
                             p.display_image = first_image.image.url if first_image else None
                 else:
                     print("Hugging Face API error:", response.status_code, response.text)
+            print("HF raw response:", response.text)
+print("HF parsed results:", hf_results)
+print("Extracted product_ids:", product_ids)
+print("Products found:", products.count())
 
             except Exception as e:
                 print("Error during HF image search:", str(e))

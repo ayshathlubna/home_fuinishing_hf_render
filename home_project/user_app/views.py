@@ -627,7 +627,8 @@ def search_page(request):
         uploaded_image = request.FILES.get("image")
         if uploaded_image:
             try:
-                hf_url = "https://huggingface.co/spaces/ayshath/hf_image_search/run/predict"
+                hf_url = "https://ayshath-hf-image-search.hf.space/run/predict"
+
                 files = {"data": uploaded_image.read()}
                 response = requests.post(hf_url, files=files)
 

@@ -59,15 +59,8 @@ def home(request):
         recommended_ids = weighted_hybrid_recommendations(request, top_k=6)
         recommended_products = Products.objects.filter(p_id__in=recommended_ids)
 
-    recently_viewed_ids = request.session.get('recently_viewed', [])
-    print("recently_viewed_ids",recently_viewed_ids)
-    if recently_viewed_ids:
-        recently_viewed_products = Products.objects.filter(p_id__in=recently_viewed_ids)
-        # Optional: preserve order from session
-        recently_viewed_products = sorted(
-            recently_viewed_products,
-            key=lambda x: recently_viewed_ids.index(x.p_id)
-        )
+        recently_viewed = RecentlyViewed.objects.filter(user=request.user).order_by('-viewed_at')[:8]
+        recently_viewed_products = [rv.product for rv in recently_viewed]
 
     
     for brand in ALLOWED_BRANDS:

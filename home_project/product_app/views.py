@@ -180,38 +180,39 @@ def delete_discount(request,id):
     discounts = Discount.objects.get(id=id)
     discounts.delete()
     return redirect('discount')
+def product_details(request, id):
+    product = Products.objects.get(p_id=id)
+    product_image = Product_image.objects.filter(p_id=product)
 
-def product_details(request,id):
-    product = Products.objects.get(p_id = id)
-    product_image =Product_image.objects.filter(p_id=product)
-    wishlist_ids = Wishlist.objects.filter(user=request.user).values_list('product_id', flat=True)
+    # ✅ Only query wishlist if user is logged in
+    if request.user.is_authenticated:
+        wishlist_ids = Wishlist.objects.filter(user=request.user).values_list('product_id', flat=True)
+    else:
+        wishlist_ids = []  # empty if not logged in
+
     discount = Discount.objects.filter(product=product).first()
     product_images = []
-    all_products = Products.objects.filter(sub_category = product.sub_category).exclude(p_id=product.p_id)[:4]
+    all_products = Products.objects.filter(sub_category=product.sub_category).exclude(p_id=product.p_id)[:4]
+    
     for p in all_products:
         image = Product_image.objects.filter(p_id=p).first()
-        discount = Discount.objects.filter(product=p).first()
-         # maintain session history
-        
+        disc = Discount.objects.filter(product=p).first()
         product_images.append({
             'product_id': p,
             'image': image,
-            'discount': discount
+            'discount': disc
         })
 
-        # Store recently viewed products in session
+    # ✅ Recently viewed only for logged-in users
     if request.user.is_authenticated:
-        # Save or update record
         RecentlyViewed.objects.update_or_create(
             user=request.user,
             product=product,
             defaults={'viewed_at': timezone.now()}
         )
-
-        # Keep only last 8
         viewed = RecentlyViewed.objects.filter(user=request.user).order_by('-viewed_at')
         if viewed.count() > 8:
             for old in viewed[8:]:
                 old.delete()
 
-    return render(request,'user/product_details.html',locals())
+    return render(request, 'user/product_details.html', locals())

@@ -9,7 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.cache import never_cache
 from django.contrib import messages
 from django.contrib.auth.models import User
-from .models import Profile
+from .models import Profile, RecentlyViewed
 from cart_app.models import Cart_items,Wishlist
 from django.db.models import Sum,Q
 from .forms import ImageSearchForm

@@ -21,9 +21,9 @@ def staff_dashboard(request):
     elif section == 'orders':
         context['orders'] = Order.objects.all().order_by('-order_date')
     elif section == 'requests':
-        # All pending cancellation and return requests
+        # All pending cancellation and return requests now share the 'Requested' status
         context['requests'] = Order_items.objects.filter(
-            refund_status__in=['cancellation_requested', 'return_requested']
+            Q(delivery_status='Cancellation Requested') |  Q(delivery_status='Return Requested')
         ).order_by('-order__order_date')
 
     return render(request, 'staff_dashboard/staff_dashboard.html', context)
@@ -52,10 +52,16 @@ def order_list(request):
 # -------------------------------
 # Staff Order Detail
 # -------------------------------
+# staff_dashboard/views.py
+from django.utils import timezone
+# ... other imports
+
+# -------------------------------
+# Staff Order Detail
+# -------------------------------
 @login_required
 def staff_order_detail(request, order_id):
-    if not (request.user.is_staff or request.user.is_superuser):
-        return HttpResponseForbidden("Not authorized")
+    # ... (authorization check)
 
     order = get_object_or_404(Order, order_id=order_id)
     items = order.items.all()
@@ -63,37 +69,28 @@ def staff_order_detail(request, order_id):
     if request.method == "POST":
         for item in items:
             delivery_status = request.POST.get(f"delivery_status_{item.id}")
+            payment_status = request.POST.get(f"payment_status_{item.id}")
             refund_status = request.POST.get(f"refund_status_{item.id}")
-            
+
+            # Check if the status is changing to 'Delivered'
+            if delivery_status == "Delivered" and item.delivery_date is None:
+                item.delivery_date = timezone.now().date()
+
+            # Update other statuses as before
             if delivery_status:
                 item.delivery_status = delivery_status
+            # ... (other updates, e.g., refund_status)
+
+            if payment_status:
+                item.payment_status = payment_status
+
             if refund_status:
                 item.refund_status = refund_status
             item.save()
 
-        # Update order-level refund status
-        refunded_items = items.filter(refund_status="Completed").count()
-        total_items = items.count()
-        if refunded_items == 0:
-            order.refund_status = "Not Requested"
-        elif refunded_items < total_items:
-            order.refund_status = "Partially Refunded"
-        else:
-            order.refund_status = "Refunded"
-
-        # Update payment status if online payment
-        if order.payment_method != "Cash on Delivery":
-            if order.refund_status == "Refunded":
-                order.payment_status = "Refunded"
-            elif order.refund_status == "Partially Refunded":
-                order.payment_status = "Paid"
-
-        order.save()
         return redirect("staff_order_detail", order_id=order_id)
 
     return render(request, "staff_dashboard/order_detail.html", {"order": order, "items": items})
-
-
 # -------------------------------
 # Approve Cancel / Return Request
 # -------------------------------
@@ -103,32 +100,51 @@ def approve_request(request, item_id):
         return HttpResponseForbidden("Not authorized")
 
     item = get_object_or_404(Order_items, id=item_id)
+    order = item.order
+    
+    # Calculate the proportional share of fees
+    total_quantity = order.total_quantity
+    if total_quantity > 0:
+        fee_per_item = (order.platform_fee + order.delivery_charge) / total_quantity
+    else:
+        fee_per_item = 0
 
-    # Handle cancellation request
-    if item.refund_status == "cancellation_requested":
+    # Calculate the refund amount for this specific item
+    calculated_refund_amount = item.total_amount + fee_per_item
+
+    if item.delivery_status == "Cancellation Requested":
+        # Handle cancellation approval
         item.delivery_status = "Cancelled"
-        item.refund_status = "Completed"
+       
+        if item.order.payment_method != "Cash on Delivery":
+            item.payment_status = "Refunded"
+            item.refund_status = "Completed"
+            item.refund_amount = calculated_refund_amount
+        else:
+            item.payment_status = "Cancelled"
+        
+        # Add stock back to the product
         item.product.stock = F('stock') + item.quantity
         item.product.save()
 
-    # Handle return request
-    elif item.refund_status == "return_requested":
+    elif item.delivery_status == "Return Requested":
+        # Handle return approval
+        item.delivery_status = "Returned"
+        item.payment_status = "Refunded"
         item.refund_status = "Completed"
+        item.refund_amount = calculated_refund_amount
+        
+        # Add stock back to the product
         item.product.stock = F('stock') + item.quantity
         item.product.save()
+    else:
+        # Request is not in a valid state to be approved
+        return redirect("staff_dashboard")
 
+    # Save the order item with the new status and refund amount
     item.save()
 
-    # Update order refund status
-    order = item.order
-    refunded_items = order.items.filter(refund_status="Completed").count()
-    total_items = order.items.count()
-    order.refund_status = "Partially Refunded" if refunded_items < total_items else "Refunded"
-    order.save()
-
-    return redirect("staff_order_detail", order_id=item.order.order_id)
-
-
+    return redirect("staff_order_detail", order_id=order.order_id)
 # -------------------------------
 # Reject Cancel / Return Request
 # -------------------------------
@@ -138,23 +154,14 @@ def reject_request(request, item_id):
         return HttpResponseForbidden("Not authorized")
 
     item = get_object_or_404(Order_items, id=item_id)
+    
+    # Check the type of request to revert the delivery status correctly
+    if item.delivery_status == "Cancellation Requested":
+        item.delivery_status = "Pending"
+    elif item.delivery_status == "Return Requested":
+        item.delivery_status = "Delivered"
+
     item.refund_status = "Rejected"
-    item.save()
+    item.save() # This save call will trigger the parent Order update
 
     return redirect("staff_order_detail", order_id=item.order.order_id)
-
-
-# -------------------------------
-# Centralized Requests List
-# -------------------------------
-@login_required
-def requests_dashboard(request):
-    if not (request.user.is_staff or request.user.is_superuser):
-        return HttpResponseForbidden("Not authorized")
-
-    # Combine cancellation and return requests
-    requests = Order_items.objects.filter(
-        refund_status__in=['cancellation_requested', 'return_requested']
-    ).order_by('-order__order_date')
-
-    return render(request, "staff_dashboard/requests_dashboard.html", {"requests": requests})

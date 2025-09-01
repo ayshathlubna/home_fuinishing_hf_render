@@ -6,11 +6,9 @@ from datetime import timedelta
 from .models import Order, Order_items
 from cart_app.models import Cart, Cart_items, Default_address
 from product_app.models import Products, Product_image, Discount
-
 # ------------------------
 # Place Order
 # ------------------------
-@login_required
 @login_required
 def placed_order(request):
     cart = Cart.objects.get(user=request.user)
@@ -20,7 +18,6 @@ def placed_order(request):
         messages.error(request, "Your cart is empty.")
         return redirect('view_cart')
 
-    # Check stock availability
     for item in cart_items:
         if item.quantity > item.product.stock:
             messages.error(
@@ -33,6 +30,12 @@ def placed_order(request):
         payment_method = request.POST.get('payment_method')
         default_address = Default_address.objects.get(user=request.user)
 
+        # Set payment status based on method
+        if payment_method != "Cash on Delivery":
+            payment_status = "Paid"
+        else:
+            payment_status = "Pending"
+            
         order = Order.objects.create(
             user=request.user,
             address=default_address.address,
@@ -42,20 +45,24 @@ def placed_order(request):
             delivery_charge=cart.shipping,
             platform_fee=cart.platform_fee,
             total_amount=cart.final_total,
-            payment_method=payment_method
+            payment_method=payment_method,
+            payment_status=payment_status # Use the newly determined status
         )
 
         for item in cart_items:
+            # Set initial item payment status
+            item_payment_status = "Paid" if payment_status == "Paid" else "Pending"
+
             Order_items.objects.create(
                 order=order,
                 product=item.product,
                 quantity=item.quantity,
                 amount=item.price,
                 total_amount=item.price * item.quantity,
-                image=item.image
+                image=item.image,
+                payment_status=item_payment_status,
             )
 
-            # Reduce stock
             item.product.stock -= item.quantity
             item.product.save()
 
@@ -86,54 +93,23 @@ def orders(request):
 # User Order Details
 # ------------------------
 @login_required
+# ------------------------
+# User Order Details
+# ------------------------
+@login_required
 def order_details(request, id):
     order = get_object_or_404(Order, user=request.user, order_id=id)
     order_items = Order_items.objects.filter(order=order)
 
-    current_date = timezone.now().date()
-    partially_refunded = False
-
-    for item in order_items:
-        # Initialize flags
-        item.can_return_now = False
-        item.can_cancel_now = False
-        item.cancellation_requested = False  # <-- New flag
-
-        # Return eligibility: delivered and within 7 days
-        if item.delivery_status == "Delivered":
-            if item.delivery_date:
-                delta_days = (current_date - item.delivery_date).days
-                if delta_days <= 7:
-                    item.can_return_now = True
-
-        # Cancel eligibility: pending and not refunded
-        if item.delivery_status == "Pending" and item.refund_status == "Not Requested":
-            item.can_cancel_now = True
-
-        # Check if cancellation is requested
-        if item.refund_status == "cancellation_requested":
-            item.cancellation_requested = True
-
-    # Partially refunded check
-    total_items = order_items.count()
-    refunded_items = order_items.filter(refund_status="Completed").count()
-    if 0 < refunded_items < total_items:
-        partially_refunded = True
-
-    # Update order refund status automatically
-    if refunded_items == total_items:
-        order.refund_status = "Completed"
-        order.save()
-    elif partially_refunded:
-        order.refund_status = "Partially Refunded"
-        order.save()
-
+    # No need for manual status updates here, the model's save method handles it.
+    
     context = {
         "order": order,
         "order_items": order_items,
-        "partially_refunded": partially_refunded,
     }
     return render(request, 'user/order/order_details.html', context)
+# order_app/views.py
+# ... other imports
 
 # ------------------------
 # Cancel Order Item Request
@@ -141,19 +117,40 @@ def order_details(request, id):
 @login_required
 def cancel_order(request, item_id):
     order_item = get_object_or_404(Order_items, id=item_id, order__user=request.user)
-    if order_item.delivery_status == "Pending" and order_item.refund_status == "Not Requested":
-        order_item.refund_status = "cancellation_requested"
+
+    # Check if the item can be cancelled
+    # Change the condition to only allow cancellation for "Pending" status
+    if order_item.delivery_status == "Pending":
+        order_item.delivery_status = "Cancellation Requested"
+        order_item.refund_status = "Not Requested"
+
+        if order_item.order.payment_method != "Cash on Delivery":
+            order_item.payment_status = "Refund Requested"
+            messages.success(request, "Cancellation and refund have been requested.")
+        else:
+            order_item.payment_status = "Cancelled"
+            messages.success(request, "Cancellation has been requested.")
+        
         order_item.save()
+    else:
+        messages.error(request, "This item cannot be cancelled.")
+
     return redirect('order_details', id=order_item.order.order_id)
-
-
 # ------------------------
 # Return Request
+# ------------------------
 @login_required
 def request_return(request, item_id):
     order_item = get_object_or_404(Order_items, id=item_id, order__user=request.user)
-    if order_item.can_return_now and order_item.refund_status == "not_requested":
-        order_item.refund_status = "return_requested"
+    
+    # Check if the item is eligible for return
+    if order_item.can_return() and order_item.refund_status == "Not Requested":
+        order_item.delivery_status = "Return Requested"
+        order_item.payment_status = "Refund Requested"
+        order_item.refund_status = "Requested"
         order_item.save()
         messages.success(request, "Return requested successfully.")
+    else:
+        messages.error(request, "This item is not eligible for return.")
+    
     return redirect('order_details', id=order_item.order.order_id)

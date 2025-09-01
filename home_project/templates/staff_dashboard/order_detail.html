@@ -42,6 +42,9 @@
                                 <option value="Delivered" {% if item.delivery_status == "Delivered" %}selected{% endif %}>Delivered</option>
                                 <option value="Returned" {% if item.delivery_status == "Returned" %}selected{% endif %}>Returned</option>
                                 <option value="Cancelled" {% if item.delivery_status == "Cancelled" %}selected{% endif %}>Cancelled</option>
+                                <option value="Cancellation Requested" {% if item.delivery_status == "Cancellation Requested" %}selected{% endif %}>Cancellation Requested</option>
+                                <option value="Return Requested" {% if item.delivery_status == "Return Requested" %}selected{% endif %}>Return Requested</option>
+                                   
                             </select>
                             {% if item.delivery_status == "Delivered" %}
                                 <small class="text-muted d-block mt-1">Delivered on: {{ item.order.delivery_date }}</small>
@@ -58,8 +61,8 @@
                         <td>
                             <select name="refund_status_{{ item.id }}" class="form-select form-select-sm">
                                 <option value="Not Requested" {% if item.refund_status == "Not Requested" %}selected{% endif %}>Not Requested</option>
-                                <option value="Requested" {% if item.refund_status == "Requested" %}selected{% endif %}>Return Requested</option>
-                                <option value="cancellation_requested" {% if item.refund_status == "cancellation_requested" %}selected{% endif %}>Cancellation Requested</option>
+                                <option value="Requested" {% if item.refund_status == "Requested" %}selected{% endif %}>Requested</option>
+                                <option value="Approved" {% if item.refund_status == "Approved" %}selected{% endif %}>Approved</option>
                                 <option value="Completed" {% if item.refund_status == "Completed" %}selected{% endif %}>Completed</option>
                                 <option value="Rejected" {% if item.refund_status == "Rejected" %}selected{% endif %}>Rejected</option>
                             </select>
@@ -72,7 +75,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if item.refund_status in "Requested,cancellation_requested" %}
+                            {% if item.delivery_status in "Return Requested,Cancellation Requested" %}
                                 <a href="{% url 'approve_request' item.id %}" class="btn btn-sm btn-success mb-1">Approve</a>
                                 <a href="{% url 'reject_request' item.id %}" class="btn btn-sm btn-danger mb-1">Reject</a>
                             {% else %}

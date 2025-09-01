@@ -17,49 +17,38 @@ import numpy as np
 import pickle
 # from .utils.image_search import get_image_embedding,search_similar_images  # your utils
 import os
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+# from tensorflow.keras.preprocessing import image as keras_image
+# from tensorflow.keras.applications.resnet50 import ResNet50, preprocess_input
+# from io import BytesIO
+# from sklearn.metrics.pairwise import cosine_similarity
 from .utils import weighted_hybrid_recommendations
-from tensorflow.keras.preprocessing import image as keras_image
-from io import BytesIO
-from sklearn.metrics.pairwise import cosine_similarity
-import requests
-from django.shortcuts import render
-from .forms import ImageSearchForm
-import json
-import base64
 
 from django.shortcuts import render
 
 def custom_404(request, exception):
     return render(request, 'user/404.html', status=404)
-mobilenet_model = MobileNetV2(weights='imagenet', include_top=False, pooling='avg')
 
-EMBEDDINGS_FILE = os.path.join('user_app', 'product_embeddings.npy')
-IDS_FILE = os.path.join('user_app', 'product_ids.npy')
+# model = ResNet50(weights='imagenet', include_top=False, pooling='avg')
+# data = np.load("user_app/product_data.npy", allow_pickle=True).item()
+# product_embeddings = np.array(data["embeddings"])
+# product_ids = np.array(data["ids"])
 
-product_embeddings = np.load(EMBEDDINGS_FILE)
-product_ids = np.load(IDS_FILE)
-with open(os.path.join('user_app', 'products.json'), 'r') as f:
-    products_metadata = json.load(f)
+# def get_image_embedding(img_file):
+#     img_bytes = BytesIO(img_file.read())
+#     img = keras_image.load_img(img_bytes, target_size=(224, 224))
+#     x = keras_image.img_to_array(img)
+#     x = np.expand_dims(x, axis=0)
+#     x = preprocess_input(x)
+#     return model.predict(x).flatten()
 
-def get_image_embedding(img_file):
-    if hasattr(img_file, 'read'):
-        img_bytes = BytesIO(img_file.read())
-        img = keras_image.load_img(img_bytes, target_size=(224, 224))
-    else:
-        img = keras_image.load_img(img_file, target_size=(224, 224))
+# ------------------ IMAGE SEARCH FUNCTION ------------------
+# def search_similar_images(query_embedding, embeddings, ids, top_k=5):
+#     sims = cosine_similarity([query_embedding], embeddings)[0]
+#     print("Top sims:", sims.max(), sims.min())
+#     top_indices = sims.argsort()[-top_k:][::-1]
+#     return list(ids[top_indices])
 
-    x = keras_image.img_to_array(img)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
-    embedding = mobilenet_model.predict(x).flatten()
-    return embedding
-
-def search_similar_images(query_embedding, embeddings, ids, top_k=5):
-    sims = cosine_similarity([query_embedding], embeddings)[0]
-    top_indices = sims.argsort()[-top_k:][::-1]
-    return list(ids[top_indices])
+# Create your views here.
 
 ALLOWED_BRANDS = ["Homesake","Helios","Melody","Corsica","Tiffany","Vegas"]
 def home(request):
@@ -582,15 +571,27 @@ def logout_profile(request):
 
 
 
+import requests
+from django.shortcuts import render
+from django.db.models import Q
+from .models import Products
+from .forms import ImageSearchForm
+import json
+import base64
 
 def search_page(request):
+    """
+    Handles both text-based and image-based product searches.
+    """
     query = request.GET.get("q", "")
     form = ImageSearchForm(request.POST or None, request.FILES or None)
     products = Products.objects.none()
 
+    # Initialize recent searches
     if "recent_searches" not in request.session:
         request.session["recent_searches"] = []
 
+    # Clear recent searches
     if request.GET.get("clear") == "1":
         request.session.pop("recent_searches", None)
         request.session.modified = True
@@ -605,6 +606,7 @@ def search_page(request):
             Q(brand__icontains=query)
         ).only("p_id", "p_name", "price").prefetch_related("product_image_set")
 
+        # Save text search in recent searches
         first_image_url = None
         first_product = products.first()
         if first_product:
@@ -623,10 +625,44 @@ def search_page(request):
     elif request.method == "POST" and form.is_valid():
         uploaded_image = request.FILES.get("image")
         if uploaded_image:
-            query_embedding = get_image_embedding(uploaded_image)
-            similar_ids = search_similar_images(query_embedding, product_embeddings, product_ids, top_k=5)
-            products = Products.objects.filter(p_id__in=similar_ids).prefetch_related("product_image_set")
+            try:
+                # Encode the uploaded image as base64
+                base64_image = base64.b64encode(uploaded_image.read()).decode("utf-8")
 
+                # Your ML service API endpoint
+                ml_api_url = "https://home-furnishing-ml.streamlit.app/"
+
+                # Prepare JSON payload
+                payload = {"image": f"data:{uploaded_image.content_type};base64,{base64_image}"}
+                headers = {"Content-Type": "application/json"}
+
+                # Send POST request to ML service
+                response = requests.post(ml_api_url, headers=headers, data=json.dumps(payload), timeout=60)
+                response.raise_for_status()
+
+                # Parse API response
+                api_response = response.json()
+                matching_ids = api_response.get("product_ids", [])
+                image_description = api_response.get("description", "")
+
+                # Query products based on ML results
+                if matching_ids:
+                    products = Products.objects.filter(p_id__in=matching_ids).prefetch_related("product_image_set")
+                elif image_description:
+                    products = Products.objects.filter(
+                        Q(p_name__icontains=image_description) |
+                        Q(description__icontains=image_description) |
+                        Q(category__category_name__icontains=image_description) |
+                        Q(sub_category__sub_cat_name__icontains=image_description) |
+                        Q(brand__icontains=image_description)
+                    ).only("p_id", "p_name", "price").prefetch_related("product_image_set")
+
+            except requests.exceptions.RequestException as e:
+                print(f"Error contacting ML API: {e}")
+            except Exception as e:
+                print(f"Unexpected error: {e}")
+
+    # Get recent searches for template
     recent_searches = request.session.get("recent_searches", [])[:10]
 
     return render(request, "user/search_page.html", {

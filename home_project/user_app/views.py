@@ -23,6 +23,11 @@ from .utils import weighted_hybrid_recommendations
 from tensorflow.keras.preprocessing import image as keras_image
 from io import BytesIO
 from sklearn.metrics.pairwise import cosine_similarity
+import requests
+from django.shortcuts import render
+from .forms import ImageSearchForm
+import json
+import base64
 
 from django.shortcuts import render
 
@@ -577,13 +582,7 @@ def logout_profile(request):
 
 
 
-import requests
-from django.shortcuts import render
-from django.db.models import Q
-from .models import Products
-from .forms import ImageSearchForm
-import json
-import base64
+
 def search_page(request):
     query = request.GET.get("q", "")
     form = ImageSearchForm(request.POST or None, request.FILES or None)

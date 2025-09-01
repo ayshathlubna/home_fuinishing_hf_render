@@ -17,38 +17,44 @@ import numpy as np
 import pickle
 # from .utils.image_search import get_image_embedding,search_similar_images  # your utils
 import os
-# from tensorflow.keras.preprocessing import image as keras_image
-# from tensorflow.keras.applications.resnet50 import ResNet50, preprocess_input
-# from io import BytesIO
-# from sklearn.metrics.pairwise import cosine_similarity
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from .utils import weighted_hybrid_recommendations
+from tensorflow.keras.preprocessing import image as keras_image
+from io import BytesIO
+from sklearn.metrics.pairwise import cosine_similarity
 
 from django.shortcuts import render
 
 def custom_404(request, exception):
     return render(request, 'user/404.html', status=404)
+mobilenet_model = MobileNetV2(weights='imagenet', include_top=False, pooling='avg')
 
-# model = ResNet50(weights='imagenet', include_top=False, pooling='avg')
-# data = np.load("user_app/product_data.npy", allow_pickle=True).item()
-# product_embeddings = np.array(data["embeddings"])
-# product_ids = np.array(data["ids"])
+EMBEDDINGS_FILE = os.path.join('user_app', 'product_embeddings.npy')
+IDS_FILE = os.path.join('user_app', 'product_ids.npy')
 
-# def get_image_embedding(img_file):
-#     img_bytes = BytesIO(img_file.read())
-#     img = keras_image.load_img(img_bytes, target_size=(224, 224))
-#     x = keras_image.img_to_array(img)
-#     x = np.expand_dims(x, axis=0)
-#     x = preprocess_input(x)
-#     return model.predict(x).flatten()
+product_embeddings = np.load(EMBEDDINGS_FILE)
+product_ids = np.load(IDS_FILE)
+with open(os.path.join('user_app', 'products.json'), 'r') as f:
+    products_metadata = json.load(f)
 
-# ------------------ IMAGE SEARCH FUNCTION ------------------
-# def search_similar_images(query_embedding, embeddings, ids, top_k=5):
-#     sims = cosine_similarity([query_embedding], embeddings)[0]
-#     print("Top sims:", sims.max(), sims.min())
-#     top_indices = sims.argsort()[-top_k:][::-1]
-#     return list(ids[top_indices])
+def get_image_embedding(img_file):
+    if hasattr(img_file, 'read'):
+        img_bytes = BytesIO(img_file.read())
+        img = keras_image.load_img(img_bytes, target_size=(224, 224))
+    else:
+        img = keras_image.load_img(img_file, target_size=(224, 224))
 
-# Create your views here.
+    x = keras_image.img_to_array(img)
+    x = np.expand_dims(x, axis=0)
+    x = preprocess_input(x)
+    embedding = mobilenet_model.predict(x).flatten()
+    return embedding
+
+def search_similar_images(query_embedding, embeddings, ids, top_k=5):
+    sims = cosine_similarity([query_embedding], embeddings)[0]
+    top_indices = sims.argsort()[-top_k:][::-1]
+    return list(ids[top_indices])
 
 ALLOWED_BRANDS = ["Homesake","Helios","Melody","Corsica","Tiffany","Vegas"]
 def home(request):
@@ -576,17 +582,16 @@ from django.shortcuts import render
 from django.db.models import Q
 from .models import Products
 from .forms import ImageSearchForm
-
+import json
+import base64
 def search_page(request):
     query = request.GET.get("q", "")
     form = ImageSearchForm(request.POST or None, request.FILES or None)
-    products = Products.objects.none()  
+    products = Products.objects.none()
 
-    # Initialize recent searches
     if "recent_searches" not in request.session:
         request.session["recent_searches"] = []
 
-    # Clear recent searches
     if request.GET.get("clear") == "1":
         request.session.pop("recent_searches", None)
         request.session.modified = True
@@ -601,7 +606,6 @@ def search_page(request):
             Q(brand__icontains=query)
         ).only("p_id", "p_name", "price").prefetch_related("product_image_set")
 
-        # Save text search in recent searches (store p_id + first image URL)
         first_image_url = None
         first_product = products.first()
         if first_product:
@@ -620,28 +624,9 @@ def search_page(request):
     elif request.method == "POST" and form.is_valid():
         uploaded_image = request.FILES.get("image")
         if uploaded_image:
-            try:
-                hf_url = "https://ayshath-hf-image-search.hf.space/run/predict"
-                files = {"data": uploaded_image.read()}
-                response = requests.post(hf_url, files=files)
-
-                if response.status_code == 200:
-                    hf_results = response.json()
-
-                    # ✅ Expecting just a list of product IDs
-                    if isinstance(hf_results, list):
-                        product_ids = [str(p) for p in hf_results]
-                        products = Products.objects.filter(p_id__in=product_ids).prefetch_related("product_image_set")
-                        searched = True
-                else:
-                    print("HF API error:", response.status_code, response.text)
-
-            except Exception as e:
-                print("Error during HF image search:", str(e))
-
-    
-
-
+            query_embedding = get_image_embedding(uploaded_image)
+            similar_ids = search_similar_images(query_embedding, product_embeddings, product_ids, top_k=5)
+            products = Products.objects.filter(p_id__in=similar_ids).prefetch_related("product_image_set")
 
     recent_searches = request.session.get("recent_searches", [])[:10]
 

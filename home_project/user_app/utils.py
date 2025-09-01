@@ -1,30 +1,40 @@
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from product_app.models import Products
-from cart_app.models import Cart,Wishlist
-from order_app.models import Order  # if you track purchases
+from django.db.models import F
+from .models import Products
+from cart_app.models import Cart, Wishlist
+from order_app.models import Order
+from django.conf import settings
 import os
 
 # ------------------------------
-# Load product embeddings
+# Load product embeddings and metadata
 # ------------------------------
-from django.conf import settings
+# We load two separate files now, to be consistent with our data generation script
+file_path_embeddings = os.path.join(settings.BASE_DIR, "user_app", "product_embeddings.npy")
+file_path_ids = os.path.join(settings.BASE_DIR, "user_app", "product_ids.npy")
 
-file_path = os.path.join(settings.BASE_DIR, "user_app", "product_data.npy")
-data = np.load(file_path, allow_pickle=True).item()
+if not os.path.exists(file_path_embeddings) or not os.path.exists(file_path_ids):
+    raise FileNotFoundError("Embeddings or IDs file not found. Please run create_embeddings.py.")
 
-product_embeddings = np.array(data["embeddings"])
-product_ids = np.array(data["ids"])  # ensure it's a NumPy array
+product_embeddings = np.load(file_path_embeddings, allow_pickle=True)
+product_ids = np.load(file_path_ids, allow_pickle=True)
+
+# Create a fast lookup dictionary for product IDs
+# This is much faster than np.where for repeated lookups.
+pid_to_index = {pid: i for i, pid in enumerate(product_ids)}
+
+# Pre-fetch all product data to avoid N+1 queries later
+all_products = Products.objects.all().select_related('category', 'sub_category')
+pid_to_product = {p.p_id: p for p in all_products}
 
 
 # ------------------------------
-# Helper: Get index of product
+# Helper: Get index of product (now uses a dictionary for speed)
 # ------------------------------
 def get_product_index(product_id):
     """Return the index of a product in embeddings based on product_id."""
-    idx_list = np.where(product_ids == product_id)[0]
-    return idx_list[0] if len(idx_list) > 0 else None
-
+    return pid_to_index.get(product_id)
 
 # ------------------------------
 # Image similarity
@@ -38,17 +48,20 @@ def get_image_similarity(pid):
     sims = cosine_similarity(emb, product_embeddings)[0]
     return sims
 
-
 # ------------------------------
 # Category + Brand similarity
 # ------------------------------
 def get_category_brand_similarity(pid):
-    target = Products.objects.get(p_id=pid)
+    """Return similarity scores based on a product's category and brand."""
+    target = pid_to_product.get(pid)
+    if not target:
+        return np.zeros(len(product_ids))
+
     sims = []
-    for db_pid in product_ids:  # loop over embeddings list
-        try:
-            p = Products.objects.get(p_id=db_pid)
-        except Products.DoesNotExist:
+    # Loop over the pre-fetched products, not a list of IDs
+    for db_pid in product_ids:
+        p = pid_to_product.get(db_pid)
+        if not p:
             sims.append(0)
             continue
 
@@ -61,60 +74,44 @@ def get_category_brand_similarity(pid):
 
     return np.array(sims)
 
-
 # ------------------------------
 # User preference similarity
 # ------------------------------
 def get_user_preference_similarity(user):
-    """Return similarity scores based on user's wishlist, cart, orders."""
+    """Return similarity scores based on user's wishlist, cart, and orders."""
     prefs = {}
 
-    # Wishlist (assuming it has FK to Products)
-    for w in Wishlist.objects.filter(user=user):
-        product = getattr(w, "product", None)
-        if not product and hasattr(w, "p_id"):
-            try:
-                product = Products.objects.get(p_id=w.p_id)
-            except Products.DoesNotExist:
-                continue
-        if product:
-            key = (product.category, product.brand)
-            prefs[key] = prefs.get(key, 0) + 1
+    # Combine all user interactions into a single query set for efficiency
+    # Fix: Correctly traverse the 'cart_items' relationship to get product IDs
+    cart_pids = set(Cart.objects.filter(user=user).values_list('cart_items__product_id', flat=True))
+    # Fix: Correctly traverse the 'items' relationship to get product IDs for orders
+    order_pids = set(Order.objects.filter(user=user).values_list('items__product_id', flat=True))
+    
+    # Wishlist is assumed to have a direct foreign key to a product, and the correct field name is `product_id`
+    wishlist_pids = set(Wishlist.objects.filter(user=user).values_list('product_id', flat=True))
+    
+    # Efficiently load all unique products from user's history
+    user_products = Products.objects.filter(p_id__in=wishlist_pids | cart_pids | order_pids)
+    
+    # Process the loaded products
+    for product in user_products:
+        key = (product.category, product.brand)
+        weight = 0
+        if product.p_id in wishlist_pids:
+            weight += 1
+        if product.p_id in cart_pids:
+            weight += 2
+        if product.p_id in order_pids:
+            weight += 3
+        prefs[key] = prefs.get(key, 0) + weight
 
-    # Cart
-    for c in Cart.objects.filter(user=user):
-        product = getattr(c, "product", None)
-        if not product and hasattr(c, "p_id"):
-            try:
-                product = Products.objects.get(p_id=c.p_id)
-            except Products.DoesNotExist:
-                continue
-        if product:
-            key = (product.category, product.brand)
-            prefs[key] = prefs.get(key, 0) + 2  # cart stronger weight
-
-    # Orders
-    for o in Order.objects.filter(user=user):
-        product = getattr(o, "product", None)
-        if not product and hasattr(o, "p_id"):
-            try:
-                product = Products.objects.get(p_id=o.p_id)
-            except Products.DoesNotExist:
-                continue
-        if product:
-            key = (product.category, product.brand)
-            prefs[key] = prefs.get(key, 0) + 3  # purchases = strongest
-
-    # Build vector over all products
     sims = []
     for db_pid in product_ids:
-        try:
-            p = Products.objects.get(p_id=db_pid)
-        except Products.DoesNotExist:
+        p = pid_to_product.get(db_pid)
+        if p:
+            sims.append(prefs.get((p.category, p.brand), 0))
+        else:
             sims.append(0)
-            continue
-
-        sims.append(prefs.get((p.category, p.brand), 0))
 
     return np.array(sims)
 
@@ -150,7 +147,8 @@ def weighted_hybrid_recommendations(request, top_k=6,
     for i, pid in enumerate(history):
         idx = get_product_index(pid)
         if idx is not None:
-            scores[idx] += w_history * (1 - i / len(history))  # more recent = higher weight
+            # More recent = higher weight
+            scores[idx] += w_history * (1 - i / len(history))
 
     # --- 4. User preference signals ---
     if request.user.is_authenticated:

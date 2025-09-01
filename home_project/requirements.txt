@@ -9,4 +9,5 @@ whitenoise
 pillow
 requests
 python-dotenv
+tensorflow
 

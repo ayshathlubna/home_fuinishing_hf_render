@@ -14,5 +14,5 @@ urlpatterns = [
     # path('cancellation_requests/', views.cancellation_requests, name='cancellation_requests'),
     # path('return_requests/', views.return_requests, name='return_requests'),
 
-    path('requests/', views.requests_dashboard, name='requests_dashboard'),
+    # path('requests/', views.requests_dashboard, name='requests_dashboard'),
 ]

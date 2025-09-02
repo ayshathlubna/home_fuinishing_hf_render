@@ -21,6 +21,7 @@ from .models import Products
 from .forms import ImageSearchForm
 import json
 import base64
+from django.db.models import Count
 
 from django.shortcuts import render
 
@@ -28,16 +29,29 @@ def custom_404(request, exception):
     return render(request, 'user/404.html', status=404)
 
 ALLOWED_BRANDS = ["Homesake","Helios","Melody","Corsica","Tiffany","Vegas"]
+
 def home(request):
     brand_products = {}
     if request.user.is_authenticated:
         total_items = Cart_items.objects.filter(cart__user=request.user).aggregate(Sum('quantity'))['quantity__sum'] or 0
-
         recommended_ids = weighted_hybrid_recommendations(request, top_k=6)
         recommended_products = Products.objects.filter(p_id__in=recommended_ids)
 
         recently_viewed = RecentlyViewed.objects.filter(user=request.user).order_by('-viewed_at')[:8]
         recently_viewed_products = [rv.product for rv in recently_viewed]
+
+    else:
+        popular_products = RecentlyViewed.objects.all() \
+                        .values('product') \
+                        .annotate(view_count=Count('product')) \
+                        .order_by('-view_count')[:6]
+        popular_ids = [p['product'] for p in popular_products]
+        recommended_products = Products.objects.filter(p_id__in=popular_ids)
+        # For anonymous users, get products from session
+        session_rv = request.session.get('recently_viewed', [])
+        recently_viewed_products = Products.objects.filter(p_id__in=session_rv)
+        # Optional: maintain the order from session
+        recently_viewed_products = sorted(recently_viewed_products, key=lambda x: session_rv.index(x.p_id))
 
     
     for brand in ALLOWED_BRANDS:

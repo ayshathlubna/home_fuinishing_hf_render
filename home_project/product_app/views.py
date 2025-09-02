@@ -205,14 +205,23 @@ def product_details(request, id):
 
     # ✅ Recently viewed only for logged-in users
     if request.user.is_authenticated:
-        RecentlyViewed.objects.update_or_create(
+        # Persist for logged-in users in DB
+        rv, created = RecentlyViewed.objects.update_or_create(
             user=request.user,
             product=product,
             defaults={'viewed_at': timezone.now()}
         )
+        # Keep only last 8
         viewed = RecentlyViewed.objects.filter(user=request.user).order_by('-viewed_at')
         if viewed.count() > 8:
             for old in viewed[8:]:
                 old.delete()
-
+    else:
+        # Store in session for non-users
+        session_rv = request.session.get('recently_viewed', [])
+        if product.p_id in session_rv:
+            session_rv.remove(product.p_id)  # move to front
+        session_rv.insert(0, product.p_id)
+        request.session['recently_viewed'] = session_rv[:8]
+        
     return render(request, 'user/product_details.html', locals())

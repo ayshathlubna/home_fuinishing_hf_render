@@ -81,19 +81,13 @@ def get_user_preference_similarity(user):
     """Return similarity scores based on user's wishlist, cart, and orders."""
     prefs = {}
 
-    # Combine all user interactions into a single query set for efficiency
-    # Fix: Correctly traverse the 'cart_items' relationship to get product IDs
     cart_pids = set(Cart.objects.filter(user=user).values_list('cart_items__product_id', flat=True))
-    # Fix: Correctly traverse the 'items' relationship to get product IDs for orders
     order_pids = set(Order.objects.filter(user=user).values_list('items__product_id', flat=True))
-    
-    # Wishlist is assumed to have a direct foreign key to a product, and the correct field name is `product_id`
+
     wishlist_pids = set(Wishlist.objects.filter(user=user).values_list('product_id', flat=True))
     
-    # Efficiently load all unique products from user's history
     user_products = Products.objects.filter(p_id__in=wishlist_pids | cart_pids | order_pids)
     
-    # Process the loaded products
     for product in user_products:
         key = (product.category, product.brand)
         weight = 0

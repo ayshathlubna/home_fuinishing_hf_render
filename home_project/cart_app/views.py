@@ -167,19 +167,34 @@ def delete_wishlist(request,id):
     return redirect('view_wishlist')
 
 def add_address(request):
-    address = Address.objects.all()
-    if request.method =="POST":
+    if request.method == "POST":
         name = request.POST.get('name')
-        address = request.POST.get('address')
+        address_text = request.POST.get('address')
         pincode = request.POST.get('pincode')
         contact_no = request.POST.get('contact_no')
-        address = Address.objects.create(user=request.user,name=name,address=address,pincode=pincode,contact_no=contact_no)
+
+        # simple validation
+        if not (name and address_text and pincode and contact_no):
+            messages.error(request, "All fields are required.")
+            return redirect("add_address")
+
+        Address.objects.create(
+            user=request.user,
+            name=name,
+            address=address_text,
+            pincode=pincode,
+            contact_no=contact_no
+        )
+
+        messages.success(request, "Address added successfully!")
+
         next_url = request.GET.get('next')
         if next_url:
             return redirect(next_url)
         return redirect('view_address')
-        
 
+    # 👇 For GET request (always return a template)
+    return render(request, 'user/cart/add_address.html')
 
 def view_address(request):
     address= Address.objects.filter(user=request.user)

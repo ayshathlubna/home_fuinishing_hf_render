@@ -24,7 +24,7 @@ urlpatterns = [
     path('delete-profile/', views.profile_delete, name='profile_delete'),
     path('logout/',views.logout_profile,name='logout'),
     path('search_page/',views.search_page,name="search_page")
-    # path('sort/',views.sort,name='sort')
+
 ]
 
 

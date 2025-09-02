@@ -28,7 +28,10 @@ def placed_order(request):
 
     if request.method == "POST":
         payment_method = request.POST.get('payment_method')
-        default_address = Default_address.objects.get(user=request.user)
+        default_address = Default_address.objects.filter(user=request.user).first()
+        if not default_address:
+            messages.error(request, "Please add an address before placing an order.")
+            return redirect("add_address") 
 
         # Set payment status based on method
         if payment_method != "Cash on Delivery":

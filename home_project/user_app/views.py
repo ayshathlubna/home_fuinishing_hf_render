@@ -2,7 +2,6 @@ from django.shortcuts import render,redirect
 from category_app.models import Category
 from sub_category_app.models import Sub_category
 from product_app.models import Products,Product_image,Discount
-from itertools import zip_longest
 from django.db.models import Case, When
 from django.contrib.auth import authenticate,login,logout
 from django.contrib.auth.decorators import login_required
@@ -14,41 +13,19 @@ from cart_app.models import Cart_items,Wishlist
 from django.db.models import Sum,Q
 from .forms import ImageSearchForm
 import numpy as np
-import pickle
-# from .utils.image_search import get_image_embedding,search_similar_images  # your utils
-import os
-# from tensorflow.keras.preprocessing import image as keras_image
-# from tensorflow.keras.applications.resnet50 import ResNet50, preprocess_input
-# from io import BytesIO
-# from sklearn.metrics.pairwise import cosine_similarity
 from .utils import weighted_hybrid_recommendations
+import requests
+from django.shortcuts import render
+from django.db.models import Q
+from .models import Products
+from .forms import ImageSearchForm
+import json
+import base64
 
 from django.shortcuts import render
 
 def custom_404(request, exception):
     return render(request, 'user/404.html', status=404)
-
-# model = ResNet50(weights='imagenet', include_top=False, pooling='avg')
-# data = np.load("user_app/product_data.npy", allow_pickle=True).item()
-# product_embeddings = np.array(data["embeddings"])
-# product_ids = np.array(data["ids"])
-
-# def get_image_embedding(img_file):
-#     img_bytes = BytesIO(img_file.read())
-#     img = keras_image.load_img(img_bytes, target_size=(224, 224))
-#     x = keras_image.img_to_array(img)
-#     x = np.expand_dims(x, axis=0)
-#     x = preprocess_input(x)
-#     return model.predict(x).flatten()
-
-# ------------------ IMAGE SEARCH FUNCTION ------------------
-# def search_similar_images(query_embedding, embeddings, ids, top_k=5):
-#     sims = cosine_similarity([query_embedding], embeddings)[0]
-#     print("Top sims:", sims.max(), sims.min())
-#     top_indices = sims.argsort()[-top_k:][::-1]
-#     return list(ids[top_indices])
-
-# Create your views here.
 
 ALLOWED_BRANDS = ["Homesake","Helios","Melody","Corsica","Tiffany","Vegas"]
 def home(request):
@@ -435,13 +412,8 @@ def signin(request):
         user = authenticate(username = username, password=password)
         print(user)
         if user:
-            # print(user)
-            # if user.is_superuser:
-            #     login(request,user)
-            #     return redirect('userlist')
-            # else:
-                login(request,user)
-                return redirect('home')
+            login(request,user)
+            return redirect('home')
         else:
           messages.error(request, "User not found or password is incorrect.")
     return render(request,"user/loginpage.html")
@@ -452,9 +424,6 @@ def signin(request):
 def profile(request):
     return render(request,"user/profile.html")
 
-# def get_profile(request, ):
-#     profile = User.objects.get(id=id)
-#     return render(request,"update_profile.html",locals())
 
 @login_required 
 def profile_update(request):
@@ -466,7 +435,6 @@ def profile_update(request):
     if request.method=="POST":
         user.first_name = request.POST.get("first_name")
         user.last_name = request.POST.get("last_name")
-        # userusername = request.POST.get("username")
         user.email = request.POST.get("email")
         user.profile.gender = request.POST.get("gender")
         user.profile.mobile = request.POST.get("contact_no")
@@ -493,91 +461,6 @@ def profile_delete(request):
 def logout_profile(request):
     logout(request)
     return redirect('home')
-# def extract_features(img_input):
-#     """
-#     Accepts a file path (str) or Django InMemoryUploadedFile
-#     Returns flattened feature vector
-#     """
-
-#     if hasattr(img_input, 'read'):
-#         img_bytes = BytesIO(img_input.read())
-#         img = keras_image.load_img(img_bytes, target_size=(224, 224))
-#     else:
-#         img = keras_image.load_img(img_input, target_size=(224, 224))
-
-#     img_data = keras_image.img_to_array(img)
-#     img_data = np.expand_dims(img_data, axis=0)
-#     img_data = preprocess_input(img_data)
-#     features = model.predict(img_data)
-#     return features.flatten()
-
-
-# def search_page(request):
-#     query = request.GET.get("q", "")
-#     form = ImageSearchForm(request.POST or None, request.FILES or None)
-#     products = Products.objects.none()  # default empty
-
-#     # Initialize recent searches
-#     if "recent_searches" not in request.session:
-#         request.session["recent_searches"] = []
-
-#     if request.GET.get("clear") == "1":
-#         request.session.pop("recent_searches", None)
-#         request.session.modified = True
-
-#     # ------------------ TEXT SEARCH ------------------
-#     if query:
-#         products = Products.objects.filter(
-#             Q(p_name__icontains=query) |
-#             Q(description__icontains=query) |
-#             Q(category__category_name__icontains=query) |
-#             Q(sub_category__sub_cat_name__icontains=query) |
-#             Q(brand__icontains=query)
-#         )
-
-#         # Save text search in recent searches
-#         first_image_url = None
-#         if products.exists() and products.first().product_image_set.exists():
-#             first_image_url = products.first().product_image_set.first().image.url
-
-#         new_entry = {"text": query, "image": first_image_url}
-#         recent_searches = request.session["recent_searches"]
-#         if new_entry not in recent_searches:
-#             recent_searches.insert(0, new_entry)
-#             request.session["recent_searches"] = recent_searches[:10]
-#             request.session.modified = True
-
-#     # ------------------ IMAGE SEARCH ------------------
-#     elif request.method == "POST" and form.is_valid():
-#         uploaded_image = request.FILES.get("image")
-#         print("Uploaded image:", uploaded_image)
-#         if uploaded_image:
-#             query_embedding = get_image_embedding(uploaded_image)
-#             print("Query embedding shape:", query_embedding.shape)
-#             similar_ids = search_similar_images(query_embedding, product_embeddings, product_ids, top_k=5)
-#             similar_ids = list(set(similar_ids))
-#             products = Products.objects.filter(p_id__in=similar_ids)
-#             print("Similar IDs:", similar_ids)
-#             print("Products found:", products)
-
-#     recent_searches = request.session.get("recent_searches", [])[:10]
-
-#     return render(request, "user/search_page.html", {
-#         "query": query,
-#         "products": products,
-#         "recent_searches": recent_searches,
-#         "form": form
-#     })
-
-
-
-import requests
-from django.shortcuts import render
-from django.db.models import Q
-from .models import Products
-from .forms import ImageSearchForm
-import json
-import base64
 
 def search_page(request):
     """

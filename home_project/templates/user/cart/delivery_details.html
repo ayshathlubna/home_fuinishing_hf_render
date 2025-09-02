@@ -60,9 +60,15 @@
                 <h5>Total ({{ total_items }} items): ₹{{ cart.final_total }}</h5>
 
                 <div class="text-center mt-4">
-                    <a href="{% url 'placed_order' %}">
-                        <button class="btn btn-warning w-100 text-light">Proceed to Payment</button>
-                    </a>
+                    {% if default_address %}
+                        <a href="{% url 'placed_order' %}">
+                            <button class="btn btn-warning w-100 text-light">Proceed to Payment</button>
+                        </a>
+                    {% else %}
+                        <button class="btn btn-secondary w-100 text-light" disabled>
+                            Add an address to proceed
+                        </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
